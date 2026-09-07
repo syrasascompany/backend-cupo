@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 
 @RestController
@@ -15,10 +16,19 @@ public class ListaEsperaControlador {
 
     private final ListaEsperaRepositorio repositorio;
 
+    /**
+     * Las que esperan y las que ya recibieron aviso. Antes solo salían las
+     * que esperaban, así que al avisarles parecía que se borraban.
+     */
     @GetMapping
     public List<ListaEspera> esperando() {
-        return repositorio.findByEmpresaIdAndEstadoOrderByCreadoEnAsc(
-                ContextoEmpresa.actual(), EstadoEspera.ESPERANDO);
+        Long empresaId = ContextoEmpresa.actual();
+        List<ListaEspera> lista = new ArrayList<>(
+                repositorio.findByEmpresaIdAndEstadoOrderByCreadoEnAsc(
+                        empresaId, EstadoEspera.ESPERANDO));
+        lista.addAll(repositorio.findByEmpresaIdAndEstadoOrderByCreadoEnAsc(
+                empresaId, EstadoEspera.AVISADO));
+        return lista;
     }
 
     public record NuevaEspera(@NotNull Long servicioId, Long profesionalId,

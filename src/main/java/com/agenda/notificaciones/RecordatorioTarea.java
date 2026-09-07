@@ -77,7 +77,8 @@ public class RecordatorioTarea {
                 LocalDateTime inicio = LocalDateTime.ofInstant(cita.getInicio(), zona);
 
                 try {
-                    wa.plantilla(empresa.getWaPhoneNumberId(), empresa.getWaToken(), telefono,
+                    boolean salio = wa.plantilla(
+                            empresa.getWaPhoneNumberId(), empresa.getWaToken(), telefono,
                             tipo.equals("RECORDATORIO_24H")
                                     ? "recordatorio_cita_24h" : "recordatorio_cita_2h",
                             "es",
@@ -86,6 +87,28 @@ public class RecordatorioTarea {
                                     DIA.format(inicio),
                                     HORA.format(inicio),
                                     nombreProfesional(cita.getProfesionalId())));
+
+                    if (!salio) {
+                        log.warn("La plantilla del recordatorio no salió. Se intenta como texto.");
+                        salio = wa.texto(empresa.getWaPhoneNumberId(), empresa.getWaToken(),
+                                telefono, """
+                                %s, le recordamos su cita 💅
+
+                                %s
+                                📅 %s
+                                🕐 %s
+                                👤 Con %s
+
+                                Si necesita moverla o cancelarla, respóndame «cambiar»."""
+                                        .formatted(nombreDe(cita), nombreServicio(cita.getServicioId()),
+                                                DIA.format(inicio), HORA.format(inicio),
+                                                nombreProfesional(cita.getProfesionalId())));
+                    }
+
+                    if (!salio) {
+                        log.error("No se pudo mandar el recordatorio de la cita {}", cita.getId());
+                        continue;   // se reintenta en la próxima pasada
+                    }
 
                     registrar(empresa.getId(), cita.getId(), tipo, telefono, null);
 
@@ -128,12 +151,34 @@ public class RecordatorioTarea {
         for (ListaEspera espera : candidatos) {
             if (avisados >= 3) break;
             try {
-                wa.plantilla(empresa.getWaPhoneNumberId(), empresa.getWaToken(),
+                String nombre = espera.getNombre() == null ? "Hola" : espera.getNombre();
+                String servicio = nombreServicio(cancelada.getServicioId());
+
+                boolean salio = wa.plantilla(empresa.getWaPhoneNumberId(), empresa.getWaToken(),
                         espera.getTelefono(), "cupo_disponible", "es",
-                        List.of(espera.getNombre() == null ? "Hola" : espera.getNombre(),
-                                nombreServicio(cancelada.getServicioId()),
-                                DIA.format(inicio),
-                                HORA.format(inicio)));
+                        List.of(nombre, servicio, DIA.format(inicio), HORA.format(inicio)));
+
+                // Si la plantilla no está aprobada todavía, se intenta como texto.
+                // Solo llega si la clienta escribió en las últimas 24 horas,
+                // pero es mejor que no avisarle.
+                if (!salio) {
+                    log.warn("La plantilla cupo_disponible no salió. Se intenta como texto.");
+                    salio = wa.texto(empresa.getWaPhoneNumberId(), empresa.getWaToken(),
+                            espera.getTelefono(), """
+                            %s, se desocupó un cupo 🙌
+
+                            %s
+                            📅 %s
+                            🕐 %s
+
+                            Si lo quiere, respóndame «cita» y se lo aparto."""
+                                    .formatted(nombre, servicio, DIA.format(inicio), HORA.format(inicio)));
+                }
+
+                if (!salio) {
+                    log.error("No se pudo avisar a {} del cupo libre", espera.getTelefono());
+                    continue;   // se deja ESPERANDO para intentar con el siguiente cupo
+                }
 
                 espera.setEstado(EstadoEspera.AVISADO);
                 espera.setAvisadoEn(Instant.now());

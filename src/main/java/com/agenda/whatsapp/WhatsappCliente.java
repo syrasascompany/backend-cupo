@@ -52,31 +52,34 @@ public class WhatsappCliente {
 
     private void guardar(String para, String texto) {
         bandeja.computeIfAbsent(para, k -> Collections.synchronizedList(new ArrayList<>()))
-               .add(texto);
+                .add(texto);
         log.info("[WhatsApp simulado] a {} -> {}", para, texto);
     }
 
-    private void enviar(String phoneNumberId, String token, Map<String, Object> cuerpo) {
-        if (simular) return;   // en simulación ya se guardó arriba
+    /** Devuelve true si Meta lo aceptó. Antes se tragaba los fallos en silencio. */
+    private boolean enviar(String phoneNumberId, String token, Map<String, Object> cuerpo) {
+        if (simular) return true;   // en simulación ya se guardó arriba
 
         try {
             http.post()
-                .uri("/{version}/{id}/messages", version, phoneNumberId)
-                .header("Authorization", "Bearer " + token)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(json.writeValueAsString(cuerpo))
-                .retrieve()
-                .toBodilessEntity();
+                    .uri("/{version}/{id}/messages", version, phoneNumberId)
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(json.writeValueAsString(cuerpo))
+                    .retrieve()
+                    .toBodilessEntity();
+            return true;
         } catch (Exception e) {
             // Un mensaje que no sale nunca debe tumbar la agenda.
             log.error("Falló el envío por WhatsApp: {}", e.getMessage());
+            return false;
         }
     }
 
     /** Texto libre. Solo válido dentro de las 24 horas desde el último mensaje del cliente. */
-    public void texto(String phoneNumberId, String token, String para, String texto) {
-        if (simular) { guardar(para, texto); return; }
-        enviar(phoneNumberId, token, Map.of(
+    public boolean texto(String phoneNumberId, String token, String para, String texto) {
+        if (simular) { guardar(para, texto); return true; }
+        return enviar(phoneNumberId, token, Map.of(
                 "messaging_product", "whatsapp",
                 "to", para,
                 "type", "text",
@@ -89,9 +92,9 @@ public class WhatsappCliente {
      * Lista de opciones. Sirve hasta 10 filas y es lo que evita que el bot
      * tenga que entender frases sueltas.
      */
-    public void lista(String phoneNumberId, String token, String para,
-                      String cuerpo, String textoBoton, String tituloSeccion,
-                      List<Opcion> opciones) {
+    public boolean lista(String phoneNumberId, String token, String para,
+                         String cuerpo, String textoBoton, String tituloSeccion,
+                         List<Opcion> opciones) {
 
         List<Map<String, Object>> filas = opciones.stream().limit(10)
                 .map(o -> {
@@ -109,9 +112,9 @@ public class WhatsappCliente {
                     .append(o.descripcion() == null ? "" : " — " + o.descripcion())
                     .append("\n"));
             guardar(para, sb.toString().trim());
-            return;
+            return true;
         }
-        enviar(phoneNumberId, token, Map.of(
+        return enviar(phoneNumberId, token, Map.of(
                 "messaging_product", "whatsapp",
                 "to", para,
                 "type", "interactive",
@@ -126,8 +129,8 @@ public class WhatsappCliente {
     }
 
     /** Hasta tres botones. Para confirmar, cancelar o reprogramar. */
-    public void botones(String phoneNumberId, String token, String para,
-                        String cuerpo, List<Opcion> opciones) {
+    public boolean botones(String phoneNumberId, String token, String para,
+                           String cuerpo, List<Opcion> opciones) {
 
         List<Map<String, Object>> botones = opciones.stream().limit(3)
                 .map(o -> Map.<String, Object>of(
@@ -140,9 +143,9 @@ public class WhatsappCliente {
             opciones.forEach(o -> sb.append("  [").append(o.id()).append("] ")
                     .append(o.titulo()).append("\n"));
             guardar(para, sb.toString().trim());
-            return;
+            return true;
         }
-        enviar(phoneNumberId, token, Map.of(
+        return enviar(phoneNumberId, token, Map.of(
                 "messaging_product", "whatsapp",
                 "to", para,
                 "type", "interactive",
@@ -156,18 +159,18 @@ public class WhatsappCliente {
      * Plantilla aprobada por Meta. Es la única forma de escribirle a alguien
      * FUERA de la ventana de 24 horas: recordatorios, avisos de cupo libre.
      */
-    public void plantilla(String phoneNumberId, String token, String para,
-                          String nombrePlantilla, String idioma, List<String> parametros) {
+    public boolean plantilla(String phoneNumberId, String token, String para,
+                             String nombrePlantilla, String idioma, List<String> parametros) {
 
         List<Map<String, Object>> componentes = parametros.isEmpty() ? List.of() : List.of(
                 Map.of("type", "body",
-                       "parameters", parametros.stream()
-                               .map(p -> Map.<String, Object>of("type", "text", "text", p))
-                               .toList()));
+                        "parameters", parametros.stream()
+                                .map(p -> Map.<String, Object>of("type", "text", "text", p))
+                                .toList()));
 
         if (simular) {
             guardar(para, "(plantilla " + nombrePlantilla + ") " + String.join(" | ", parametros));
-            return;
+            return true;
         }
 
         Map<String, Object> plantilla = new LinkedHashMap<>();
@@ -175,7 +178,7 @@ public class WhatsappCliente {
         plantilla.put("language", Map.of("code", idioma));
         if (!componentes.isEmpty()) plantilla.put("components", componentes);
 
-        enviar(phoneNumberId, token, Map.of(
+        return enviar(phoneNumberId, token, Map.of(
                 "messaging_product", "whatsapp",
                 "to", para,
                 "type", "template",
