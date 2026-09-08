@@ -4,6 +4,8 @@ public enum PasoBot {
     INICIO,
     ELIGIENDO_SERVICIO,
     ELIGIENDO_FECHA,
+    /** Escogiendo mañana, tarde o noche antes de ver las horas. */
+    ELIGIENDO_FRANJA,
     ELIGIENDO_CUPO,
     PIDIENDO_NOMBRE,
     /** Escogiendo cuál de sus citas quiere mover o cancelar. */

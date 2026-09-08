@@ -137,6 +137,7 @@ public class BotServicio {
                 case INICIO, ESPERANDO_HUMANO -> mostrarServicios(empresa, c);
                 case ELIGIENDO_SERVICIO -> recibirServicio(empresa, c, seleccion);
                 case ELIGIENDO_FECHA -> recibirFecha(empresa, c, seleccion);
+                case ELIGIENDO_FRANJA -> recibirFranja(empresa, c, seleccion);
                 case ELIGIENDO_CUPO -> recibirCupo(empresa, c, seleccion);
                 case PIDIENDO_NOMBRE -> recibirNombre(empresa, c, entrada.texto());
                 case ELIGIENDO_CITA -> recibirCita(empresa, c, seleccion);
@@ -289,7 +290,15 @@ public class BotServicio {
             return;
         }
         c.setFecha(LocalDate.parse(seleccion.substring(4)));
+        mostrarFranjas(empresa, c);
+    }
 
+    /**
+     * WhatsApp solo deja 10 filas por lista, y con ocho manicuristas eso se
+     * llena en la primera hora. Se pregunta primero la franja: menos opciones,
+     * más fáciles de leer, y queda espacio para las demás salidas.
+     */
+    private void mostrarFranjas(Empresa empresa, Conversacion c) {
         List<Cupo> cupos = disponibilidad.cupos(c.getServicioId(), c.getFecha(), null);
         if (cupos.isEmpty()) {
             responder(empresa, c.getTelefono(), "Se acaba de ocupar ese día 😕");
@@ -297,42 +306,82 @@ public class BotServicio {
             return;
         }
 
-        // Un cupo por hora y por profesional, para no abrumar con 40 opciones
+        long manana = cupos.stream().filter(x -> franjaDe(x) == 1).count();
+        long tarde  = cupos.stream().filter(x -> franjaDe(x) == 2).count();
+        long noche  = cupos.stream().filter(x -> franjaDe(x) == 3).count();
+
         List<Opcion> opciones = new ArrayList<>();
-        Set<String> vistos = new HashSet<>();
-        for (Cupo cupo : cupos) {
-            String llave = cupo.inicio().toLocalTime() + "-" + cupo.profesionalId();
-            if (!vistos.add(llave)) continue;
-            opciones.add(new Opcion(
-                    "cup_" + cupo.profesionalId() + "_" + cupo.inicio(),
-                    HORA.format(cupo.inicio()),
-                    "Con " + cupo.profesionalNombre()));
-            if (opciones.size() == 9) break;
-        }
+        if (manana > 0) opciones.add(new Opcion("fra_1", "En la mañana",
+                "Antes de las 12 · " + manana + " libres"));
+        if (tarde > 0) opciones.add(new Opcion("fra_2", "En la tarde",
+                "De 12 a 5 · " + tarde + " libres"));
+        if (noche > 0) opciones.add(new Opcion("fra_3", "En la noche",
+                "Después de las 5 · " + noche + " libres"));
+
         opciones.add(new Opcion("otro_dia", "Ver otro día", null));
         opciones.add(new Opcion("avisenme", "Ninguno me sirve",
                 "Avísenme si se desocupa algo"));
 
         wa.lista(empresa.getWaPhoneNumberId(), empresa.getWaToken(), c.getTelefono(),
-                "Estos son los horarios libres para el "
-                        + DIA.format(c.getFecha()) + " 👇",
-                "Ver horarios", "Horarios", opciones);
+                "Para el " + DIA.format(c.getFecha()) + " tenemos cupos 👇\n\n"
+                        + "¿A qué hora le queda mejor?",
+                "Ver horarios", "Franjas", opciones);
+        c.setPaso(PasoBot.ELIGIENDO_FRANJA);
+    }
+
+    /** 1 = mañana, 2 = tarde, 3 = noche. */
+    private int franjaDe(Cupo cupo) {
+        int hora = cupo.inicio().getHour();
+        if (hora < 12) return 1;
+        return hora < 17 ? 2 : 3;
+    }
+
+    private void recibirFranja(Empresa empresa, Conversacion c, String seleccion) {
+        if ("otro_dia".equals(seleccion)) { mostrarFechas(empresa, c); return; }
+        if ("avisenme".equals(seleccion)) { preguntarRangoEspera(empresa, c); return; }
+
+        if (seleccion == null || !seleccion.startsWith("fra_")) {
+            mostrarFranjas(empresa, c);
+            return;
+        }
+        int franja = Integer.parseInt(seleccion.substring(4));
+
+        List<Cupo> cupos = disponibilidad.cupos(c.getServicioId(), c.getFecha(), null).stream()
+                .filter(x -> franjaDe(x) == franja)
+                .toList();
+
+        if (cupos.isEmpty()) { mostrarFranjas(empresa, c); return; }
+
+        // Un cupo por hora: si tres chicas están libres a las 9, se ofrece una.
+        // La clienta no está escogiendo persona, está escogiendo hora.
+        List<Opcion> opciones = new ArrayList<>();
+        Set<LocalTime> horasVistas = new HashSet<>();
+        for (Cupo cupo : cupos) {
+            if (!horasVistas.add(cupo.inicio().toLocalTime())) continue;
+            opciones.add(new Opcion(
+                    "cup_" + cupo.profesionalId() + "_" + cupo.inicio(),
+                    HORA.format(cupo.inicio()),
+                    "Con " + cupo.profesionalNombre()));
+            if (opciones.size() == 8) break;
+        }
+        opciones.add(new Opcion("otra_franja", "Ver otra franja", null));
+        opciones.add(new Opcion("avisenme", "Ninguno me sirve",
+                "Avísenme si se desocupa algo"));
+
+        wa.lista(empresa.getWaPhoneNumberId(), empresa.getWaToken(), c.getTelefono(),
+                "Horarios libres 👇", "Ver horarios", "Horarios", opciones);
         c.setPaso(PasoBot.ELIGIENDO_CUPO);
     }
 
     // ---------------- Paso 4: confirmar ----------------
 
     private void recibirCupo(Empresa empresa, Conversacion c, String seleccion) {
-        if ("otro_dia".equals(seleccion)) {
-            mostrarFechas(empresa, c);
-            return;
-        }
-        if ("avisenme".equals(seleccion)) {
-            preguntarRangoEspera(empresa, c);
-            return;
-        }
+        if ("otro_dia".equals(seleccion)) { mostrarFechas(empresa, c); return; }
+        if ("otra_franja".equals(seleccion)) { mostrarFranjas(empresa, c); return; }
+        if ("avisenme".equals(seleccion)) { preguntarRangoEspera(empresa, c); return; }
+
         if (seleccion == null || !seleccion.startsWith("cup_")) {
-            recibirFecha(empresa, c, "fec_" + c.getFecha());
+            mostrarFranjas(empresa, c);
             return;
         }
 
@@ -548,10 +597,11 @@ public class BotServicio {
         List<Cupo> cupos = disponibilidad.cupos(c.getServicioId(), c.getFecha(), null);
         if (cupos.isEmpty()) { mostrarFechasParaMover(empresa, c); return; }
 
+        // Una opción por hora, no por persona: si no, no caben.
         List<Opcion> opciones = new ArrayList<>();
-        Set<String> vistos = new HashSet<>();
+        Set<LocalTime> horasVistas = new HashSet<>();
         for (Cupo cupo : cupos) {
-            if (!vistos.add(cupo.inicio().toLocalTime() + "-" + cupo.profesionalId())) continue;
+            if (!horasVistas.add(cupo.inicio().toLocalTime())) continue;
             opciones.add(new Opcion("ncup_" + cupo.profesionalId() + "_" + cupo.inicio(),
                     HORA.format(cupo.inicio()), "Con " + cupo.profesionalNombre()));
             if (opciones.size() == 9) break;
