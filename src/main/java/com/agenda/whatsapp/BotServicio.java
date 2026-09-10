@@ -90,7 +90,12 @@ public class BotServicio {
                     });
 
             c.setUltimoMensaje(Instant.now());
-            if (c.getNombreCliente() == null) c.setNombreCliente(entrada.nombrePerfil());
+
+            // El nombre del perfil de WhatsApp casi nunca trae apellido, y a
+            // veces es un apodo. Solo se toma si parece un nombre completo.
+            if (c.getNombreCliente() == null && esNombreCompleto(entrada.nombrePerfil())) {
+                c.setNombreCliente(limpiarNombre(entrada.nombrePerfil()));
+            }
 
             String seleccion = entrada.idSeleccion();
             String texto = entrada.texto() == null ? "" : entrada.texto().trim().toLowerCase();
@@ -393,8 +398,9 @@ public class BotServicio {
         c.setProfesionalId(profesionalId);
         c.setInicioElegido(inicio.atZone(zona).toInstant());
 
-        if (c.getNombreCliente() == null || c.getNombreCliente().isBlank()) {
-            responder(empresa, c.getTelefono(), "Perfecto ✅ ¿A nombre de quién la agendo?");
+        if (!esNombreCompleto(c.getNombreCliente())) {
+            responder(empresa, c.getTelefono(),
+                    "Perfecto ✅\n\n¿Me regala su *nombre y apellido* para la cita?");
             c.setPaso(PasoBot.PIDIENDO_NOMBRE);
             return;
         }
@@ -403,10 +409,16 @@ public class BotServicio {
 
     private void recibirNombre(Empresa empresa, Conversacion c, String texto) {
         if (texto == null || texto.isBlank()) {
-            responder(empresa, c.getTelefono(), "¿Me regala el nombre para la cita?");
+            responder(empresa, c.getTelefono(),
+                    "¿Me regala su nombre y apellido para la cita?");
             return;
         }
-        c.setNombreCliente(texto.trim());
+        if (!esNombreCompleto(texto)) {
+            responder(empresa, c.getTelefono(),
+                    "¿Me regala también el apellido? Así queda bien anotada la cita 🙌");
+            return;
+        }
+        c.setNombreCliente(limpiarNombre(texto));
         ZoneId zona = ZoneId.of(empresa.getZonaHoraria());
         confirmar(empresa, c, LocalDateTime.ofInstant(c.getInicioElegido(), zona));
     }
@@ -681,6 +693,24 @@ public class BotServicio {
                 Si alguien cancela y el cupo le sirve, le escribimos de una.
                 Es por orden de llegada, así que va bien puesta.""");
         c.reiniciar();
+    }
+
+    /** Al menos dos palabras de dos letras: nombre y apellido. */
+    private boolean esNombreCompleto(String nombre) {
+        if (nombre == null) return false;
+        String[] partes = nombre.trim().split("\\s+");
+        if (partes.length < 2) return false;
+        return Arrays.stream(partes).filter(x -> x.length() >= 2).count() >= 2;
+    }
+
+    /** "maría fernanda LOPEZ" queda "María Fernanda Lopez". */
+    private String limpiarNombre(String nombre) {
+        return Arrays.stream(nombre.trim().split("\\s+"))
+                .filter(x -> !x.isBlank())
+                .map(x -> x.substring(0, 1).toUpperCase()
+                        + (x.length() > 1 ? x.substring(1).toLowerCase() : ""))
+                .reduce((a, b) -> a + " " + b)
+                .orElse(nombre.trim());
     }
 
     private String nombreServicio(Long id) {
