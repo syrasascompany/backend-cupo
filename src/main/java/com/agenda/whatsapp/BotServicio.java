@@ -24,8 +24,10 @@ import java.util.*;
  * del bot cuesta dinero desde octubre de 2026, y además una lista se
  * equivoca mucho menos que intentar adivinar lo que escribió la clienta.
  *
- * Si algo se sale del guion, el bot se hace a un lado y avisa que
- * contesta una persona. Nunca inventa un cupo.
+ * El tono es el de la recepcionista del salón: cálida, pero al grano,
+ * porque sabe que la clienta está ocupada. Si algo se sale del guion, el
+ * bot se hace a un lado y avisa que contesta una persona. Nunca inventa
+ * un cupo.
  */
 @Service
 @Slf4j
@@ -122,7 +124,7 @@ public class BotServicio {
                 c.setPaso(PasoBot.ESPERANDO_HUMANO);
                 conversaciones.save(c);
                 responder(empresa, entrada.telefono(),
-                        "Con gusto 🙌 En un momento le responde una persona del equipo.");
+                        "Claro que sí 🙌 Ya le responde alguien del salón.");
                 return;
             }
             // Cambiar o cancelar tiene prioridad sobre agendar
@@ -171,8 +173,11 @@ public class BotServicio {
             saludarConCitas(empresa, c, suyas);
             return;
         }
-        mostrarSoloServicios(empresa, c, "¡Hola! 👋 Bienvenida a " + empresa.getNombre()
-                + ".\n\n¿Qué servicio desea agendar?");
+        mostrarSoloServicios(empresa, c, """
+                ¡Hola! 💅 Bienvenida a %s.
+
+                Cuénteme qué se quiere hacer y le muestro los horarios que tenemos libres."""
+                .formatted(empresa.getNombre()));
     }
 
     /** Para quien ya tiene cita: se le dice y se le dan las tres salidas. */
@@ -182,21 +187,19 @@ public class BotServicio {
         LocalDateTime inicio = LocalDateTime.ofInstant(proxima.getInicio(), zona);
 
         String encabezado = """
-                ¡Hola! 👋 Bienvenida a %s.
+                ¡Hola de nuevo! 💅
 
-                Usted ya tiene una cita:
-                📅 %s a las %s
-                💅 %s
+                La tenemos anotada para el %s a las %s, para %s.
 
-                ¿Qué desea hacer?"""
-                .formatted(empresa.getNombre(), DIA.format(inicio), HORA.format(inicio),
+                ¿En qué le ayudo?"""
+                .formatted(DIA.format(inicio), HORA.format(inicio),
                         nombreServicio(proxima.getServicioId()));
 
         wa.botones(empresa.getWaPhoneNumberId(), empresa.getWaToken(), c.getTelefono(),
                 encabezado,
-                List.of(new Opcion("otra_cita", "Sacar otra cita", null),
-                        new Opcion("ver_mis_citas", "Cambiar o cancelar", null),
-                        new Opcion("hablar", "Hablar con alguien", null)));
+                List.of(new Opcion("otra_cita", "Quiero otra cita", null),
+                        new Opcion("ver_mis_citas", "Mover o cancelar", null),
+                        new Opcion("hablar", "Hablar con el salón", null)));
 
         c.setPaso(PasoBot.ELIGIENDO_SERVICIO);
     }
@@ -204,8 +207,9 @@ public class BotServicio {
     private void mostrarSoloServicios(Empresa empresa, Conversacion c, String encabezado) {
         List<Servicio> lista = servicios.findByEmpresaIdAndActivoTrue(empresa.getId());
         if (lista.isEmpty()) {
+            // La clienta no tiene por qué enterarse de que falta configurar algo
             responder(empresa, c.getTelefono(),
-                    "En este momento no tenemos servicios cargados. Ya le responde una persona.");
+                    "Deme un segundo, ya le responde alguien del salón 🙌");
             c.setPaso(PasoBot.ESPERANDO_HUMANO);
             return;
         }
@@ -247,11 +251,11 @@ public class BotServicio {
             c.setPaso(PasoBot.ESPERANDO_HUMANO);
             c.setPausadoHasta(Instant.now().plus(Duration.ofHours(4)));
             responder(empresa, c.getTelefono(),
-                    "Con gusto 🙌 En un momento le responde una persona del equipo.");
+                    "Claro que sí 🙌 Ya le responde alguien del salón.");
             return;
         }
         if ("otra_cita".equals(seleccion)) {
-            mostrarSoloServicios(empresa, c, "¿Qué servicio desea agendar?");
+            mostrarSoloServicios(empresa, c, "¿Qué se quiere hacer esta vez?");
             return;
         }
 
@@ -283,7 +287,7 @@ public class BotServicio {
         }
 
         wa.lista(empresa.getWaPhoneNumberId(), empresa.getWaToken(), c.getTelefono(),
-                "¿Para qué día lo quiere?", "Ver días", "Días disponibles", opciones);
+                "¿Qué día le sirve?", "Ver días", "Días con campo", opciones);
         c.setPaso(PasoBot.ELIGIENDO_FECHA);
     }
 
@@ -302,34 +306,34 @@ public class BotServicio {
      * WhatsApp solo deja 10 filas por lista, y con ocho manicuristas eso se
      * llena en la primera hora. Se pregunta primero la franja: menos opciones,
      * más fáciles de leer, y queda espacio para las demás salidas.
+     *
+     * No se dice cuántos cupos quedan libres: "3 libres" le está diciendo a
+     * la clienta que el salón está vacío, y eso no ayuda a nadie.
      */
     private void mostrarFranjas(Empresa empresa, Conversacion c) {
         List<Cupo> cupos = disponibilidad.cupos(c.getServicioId(), c.getFecha(), null);
         if (cupos.isEmpty()) {
-            responder(empresa, c.getTelefono(), "Se acaba de ocupar ese día 😕");
+            responder(empresa, c.getTelefono(), "Se nos llenó ese día 😅 Miremos otro.");
             mostrarFechas(empresa, c);
             return;
         }
 
-        long manana = cupos.stream().filter(x -> franjaDe(x) == 1).count();
-        long tarde  = cupos.stream().filter(x -> franjaDe(x) == 2).count();
-        long noche  = cupos.stream().filter(x -> franjaDe(x) == 3).count();
+        boolean manana = cupos.stream().anyMatch(x -> franjaDe(x) == 1);
+        boolean tarde  = cupos.stream().anyMatch(x -> franjaDe(x) == 2);
+        boolean noche  = cupos.stream().anyMatch(x -> franjaDe(x) == 3);
 
         List<Opcion> opciones = new ArrayList<>();
-        if (manana > 0) opciones.add(new Opcion("fra_1", "En la mañana",
-                "Antes de las 12 · " + manana + " libres"));
-        if (tarde > 0) opciones.add(new Opcion("fra_2", "En la tarde",
-                "De 12 a 5 · " + tarde + " libres"));
-        if (noche > 0) opciones.add(new Opcion("fra_3", "En la noche",
-                "Después de las 5 · " + noche + " libres"));
+        if (manana) opciones.add(new Opcion("fra_1", "En la mañana", "Hasta el mediodía"));
+        if (tarde)  opciones.add(new Opcion("fra_2", "En la tarde", "Después de almuerzo"));
+        if (noche)  opciones.add(new Opcion("fra_3", "Al final del día", "Después de las 5"));
 
-        opciones.add(new Opcion("otro_dia", "Ver otro día", null));
-        opciones.add(new Opcion("avisenme", "Ninguno me sirve",
-                "Avísenme si se desocupa algo"));
+        opciones.add(new Opcion("otro_dia", "Mejor otro día", null));
+        opciones.add(new Opcion("avisenme", "Ninguna hora me sirve",
+                "Avísenme si se desocupa"));
 
         wa.lista(empresa.getWaPhoneNumberId(), empresa.getWaToken(), c.getTelefono(),
-                "Para el " + DIA.format(c.getFecha()) + " tenemos cupos 👇\n\n"
-                        + "¿A qué hora le queda mejor?",
+                "Para el " + DIA.format(c.getFecha()) + " sí tenemos campo 🙌\n\n"
+                        + "¿A qué hora le sirve mejor?",
                 "Ver horarios", "Franjas", opciones);
         c.setPaso(PasoBot.ELIGIENDO_FRANJA);
     }
@@ -366,15 +370,15 @@ public class BotServicio {
             opciones.add(new Opcion(
                     "cup_" + cupo.profesionalId() + "_" + cupo.inicio(),
                     HORA.format(cupo.inicio()),
-                    "Con " + cupo.profesionalNombre()));
+                    "La atiende " + cupo.profesionalNombre()));
             if (opciones.size() == 8) break;
         }
         opciones.add(new Opcion("otra_franja", "Ver otra franja", null));
-        opciones.add(new Opcion("avisenme", "Ninguno me sirve",
-                "Avísenme si se desocupa algo"));
+        opciones.add(new Opcion("avisenme", "Ninguna hora me sirve",
+                "Avísenme si se desocupa"));
 
         wa.lista(empresa.getWaPhoneNumberId(), empresa.getWaToken(), c.getTelefono(),
-                "Horarios libres 👇", "Ver horarios", "Horarios", opciones);
+                "Estas son las horas que tenemos 👇", "Ver horarios", "Horarios", opciones);
         c.setPaso(PasoBot.ELIGIENDO_CUPO);
     }
 
@@ -400,7 +404,8 @@ public class BotServicio {
 
         if (!esNombreCompleto(c.getNombreCliente())) {
             responder(empresa, c.getTelefono(),
-                    "Perfecto ✅\n\n¿Me regala su *nombre y apellido* para la cita?");
+                    "¡Listo! Ya casi 🙌\n\n¿A nombre de quién la anoto? "
+                            + "Nombre y apellido, por favor.");
             c.setPaso(PasoBot.PIDIENDO_NOMBRE);
             return;
         }
@@ -410,12 +415,13 @@ public class BotServicio {
     private void recibirNombre(Empresa empresa, Conversacion c, String texto) {
         if (texto == null || texto.isBlank()) {
             responder(empresa, c.getTelefono(),
-                    "¿Me regala su nombre y apellido para la cita?");
+                    "¿A nombre de quién la anoto? Nombre y apellido, por favor.");
             return;
         }
         if (!esNombreCompleto(texto)) {
+            // Dar la razón hace que no se sienta un trámite
             responder(empresa, c.getTelefono(),
-                    "¿Me regala también el apellido? Así queda bien anotada la cita 🙌");
+                    "¿Y el apellido? Es que a veces se nos repiten los nombres 😊");
             return;
         }
         c.setNombreCliente(limpiarNombre(texto));
@@ -433,20 +439,19 @@ public class BotServicio {
             String profNombre = profesionales.findById(c.getProfesionalId())
                     .map(Profesional::getNombre).orElse("");
 
-            ZoneId zona = ZoneId.of(empresa.getZonaHoraria());
             responder(empresa, c.getTelefono(), """
-                    ✅ *Cita confirmada*
+                    ¡Lista su cita! ✨
 
-                    %s
-                    📅 %s
-                    🕐 %s
+                    📅 %s a las %s
                     💅 %s
-                    👤 Con %s
+                    👤 La atiende %s
 
-                    El día anterior le mandamos un recordatorio.
-                    Si necesita moverla o cancelarla, escríbanos *«cambiar»*.
-                    """.formatted(c.getNombreCliente(),
-                    DIA.format(inicio), HORA.format(inicio), servicioNombre, profNombre));
+                    Le escribimos el día anterior para recordarle.
+                    Si le cambia algo, escríbame *cambiar* y lo movemos.
+
+                    ¡La esperamos! 💕"""
+                    .formatted(DIA.format(inicio), HORA.format(inicio),
+                            servicioNombre, profNombre));
 
             log.info("Cita {} creada por WhatsApp para {}", cita.getId(), c.getTelefono());
             c.reiniciar();
@@ -455,8 +460,8 @@ public class BotServicio {
             // Casi siempre significa que alguien tomó el cupo primero.
             log.warn("No se pudo crear la cita por WhatsApp: {}", e.getMessage());
             responder(empresa, c.getTelefono(),
-                    "Ese horario se acaba de ocupar 😕 Le muestro los que quedan.");
-            recibirFecha(empresa, c, "fec_" + c.getFecha());
+                    "Uy, esa hora la acaban de tomar 😅 Le muestro las que quedan.");
+            mostrarFranjas(empresa, c);
         }
     }
 
@@ -476,11 +481,10 @@ public class BotServicio {
         listaEspera.save(espera);
 
         responder(empresa, c.getTelefono(), """
-                Ahora mismo no tenemos cupos libres en los próximos días 😕
+                Estamos llenas estos días 😅
 
-                La dejé en la *lista de espera*: si alguien cancela, usted es
-                de las primeras en enterarse y le escribimos de una.
-                """);
+                Pero la dejé anotada: si alguien cancela, usted es de las primeras
+                a las que le escribo.""");
         c.reiniciar();
     }
 
@@ -494,8 +498,8 @@ public class BotServicio {
 
         if (mias.isEmpty()) {
             responder(empresa, c.getTelefono(),
-                    "No le encuentro citas agendadas 🤔\n\n"
-                            + "Si quiere sacar una, escríbame «cita».");
+                    "No le veo citas pendientes por acá 🤔\n\n"
+                            + "Si quiere sacar una, escríbame *cita* y miramos horarios.");
             c.reiniciar();
             return;
         }
@@ -509,7 +513,7 @@ public class BotServicio {
                 }).toList();
 
         wa.lista(empresa.getWaPhoneNumberId(), empresa.getWaToken(), c.getTelefono(),
-                "Estas son sus citas. ¿Cuál quiere cambiar o cancelar?",
+                "Estas son sus citas 👇 ¿Cuál quiere mover?",
                 "Ver mis citas", "Mis citas", opciones);
         c.setPaso(PasoBot.ELIGIENDO_CITA);
     }
@@ -528,11 +532,12 @@ public class BotServicio {
         }
         c.setCitaId(Long.valueOf(seleccion.substring(4)));
 
+        // El plural incluye: no es ella sola resolviendo, es el salón con ella
         wa.botones(empresa.getWaPhoneNumberId(), empresa.getWaToken(), c.getTelefono(),
-                "¿Qué desea hacer con esa cita?",
-                List.of(new Opcion("mover", "Cambiar la hora", null),
+                "¿Qué hacemos con esa cita?",
+                List.of(new Opcion("mover", "Cambiarle la hora", null),
                         new Opcion("anular", "Cancelarla", null),
-                        new Opcion("nada", "Dejarla así", null)));
+                        new Opcion("nada", "Mejor la dejo así", null)));
         c.setPaso(PasoBot.QUE_HACER_CON_CITA);
     }
 
@@ -544,13 +549,16 @@ public class BotServicio {
             case "mover" -> {
                 Cita cita = citasRepo.findByIdAndEmpresaId(c.getCitaId(), empresa.getId())
                         .orElse(null);
-                if (cita == null) { responder(empresa, c.getTelefono(),
-                        "No encontré esa cita 🤔"); c.reiniciar(); return; }
+                if (cita == null) {
+                    responder(empresa, c.getTelefono(), "No encontré esa cita 🤔");
+                    c.reiniciar();
+                    return;
+                }
                 c.setServicioId(cita.getServicioId());
                 mostrarFechasParaMover(empresa, c);
             }
             default -> {
-                responder(empresa, c.getTelefono(), "Listo, su cita queda como está ✅");
+                responder(empresa, c.getTelefono(), "Listo, ahí se la dejamos ✨");
                 c.reiniciar();
             }
         }
@@ -560,15 +568,16 @@ public class BotServicio {
         try {
             ContextoEmpresa.fijar(empresa.getId());
             citas.cambiarEstado(c.getCitaId(), EstadoCita.CANCELADA, null);
+            // Sin palomita verde: cancelar no es un logro que celebrar
             responder(empresa, c.getTelefono(), """
-                    Su cita quedó cancelada ✅
+                    Listo, ya la cancelamos.
 
-                    Cuando quiera sacar otra, escríbame «cita» y le muestro
-                    los horarios libres.""");
+                    Cuando quiera volver, escríbame *cita* y miramos horarios.
+                    ¡La esperamos pronto! 💕""");
         } catch (Exception e) {
             log.warn("No se pudo cancelar por WhatsApp: {}", e.getMessage());
             responder(empresa, c.getTelefono(),
-                    "No pude cancelarla. Ya le responde una persona del salón.");
+                    "No la pude cancelar desde aquí. Ya le responde alguien para ayudarle.");
             c.setPaso(PasoBot.ESPERANDO_HUMANO);
             return;
         }
@@ -589,13 +598,13 @@ public class BotServicio {
         }
         if (opciones.isEmpty()) {
             responder(empresa, c.getTelefono(),
-                    "No hay cupos libres en los próximos días 😕 Ya le responde una persona.");
+                    "Estamos llenas estos días 😅 Ya le responde alguien del salón.");
             c.setPaso(PasoBot.ESPERANDO_HUMANO);
             return;
         }
 
         wa.lista(empresa.getWaPhoneNumberId(), empresa.getWaToken(), c.getTelefono(),
-                "¿Para qué día la movemos?", "Ver días", "Días disponibles", opciones);
+                "¿Para qué día se la movemos?", "Ver días", "Días con campo", opciones);
         c.setPaso(PasoBot.REPROGRAMANDO_FECHA);
     }
 
@@ -615,12 +624,12 @@ public class BotServicio {
         for (Cupo cupo : cupos) {
             if (!horasVistas.add(cupo.inicio().toLocalTime())) continue;
             opciones.add(new Opcion("ncup_" + cupo.profesionalId() + "_" + cupo.inicio(),
-                    HORA.format(cupo.inicio()), "Con " + cupo.profesionalNombre()));
+                    HORA.format(cupo.inicio()), "La atiende " + cupo.profesionalNombre()));
             if (opciones.size() == 9) break;
         }
 
         wa.lista(empresa.getWaPhoneNumberId(), empresa.getWaToken(), c.getTelefono(),
-                "Horarios libres para el " + DIA.format(c.getFecha()) + " 👇",
+                "Estas son las horas del " + DIA.format(c.getFecha()) + " 👇",
                 "Ver horarios", "Horarios", opciones);
         c.setPaso(PasoBot.REPROGRAMANDO_CUPO);
     }
@@ -639,13 +648,12 @@ public class BotServicio {
             citas.reprogramar(c.getCitaId(), profesionalId, inicio);
 
             responder(empresa, c.getTelefono(), """
-                    ✅ *Cita cambiada*
+                    ¡Listo, ya la movimos! ✨
 
-                    📅 %s
-                    🕐 %s
-                    👤 Con %s
+                    📅 %s a las %s
+                    👤 La atiende %s
 
-                    El día anterior le mandamos el recordatorio."""
+                    Le recordamos el día anterior."""
                     .formatted(DIA.format(inicio), HORA.format(inicio),
                             nombreProfesional(profesionalId)));
             c.reiniciar();
@@ -653,7 +661,7 @@ public class BotServicio {
         } catch (Exception e) {
             log.warn("No se pudo reprogramar por WhatsApp: {}", e.getMessage());
             responder(empresa, c.getTelefono(),
-                    "Ese horario se acaba de ocupar 😕 Le muestro los que quedan.");
+                    "Uy, esa hora la acaban de tomar 😅 Le muestro las que quedan.");
             recibirFechaNueva(empresa, c, "nfec_" + c.getFecha());
         }
     }
@@ -662,10 +670,10 @@ public class BotServicio {
 
     private void preguntarRangoEspera(Empresa empresa, Conversacion c) {
         wa.botones(empresa.getWaPhoneNumberId(), empresa.getWaToken(), c.getTelefono(),
-                "Con gusto la aviso apenas se desocupe algo 🙌\n\n¿Hasta cuándo le sirve?",
+                "Yo le aviso apenas se desocupe algo 🙌\n\n¿Hasta cuándo le serviría?",
                 List.of(new Opcion("esp_7", "Esta semana", null),
-                        new Opcion("esp_15", "En 15 días", null),
-                        new Opcion("esp_30", "Cuando sea", null)));
+                        new Opcion("esp_15", "En quince días", null),
+                        new Opcion("esp_30", "Cuando salga", null)));
         c.setPaso(PasoBot.ELIGIENDO_ESPERA);
     }
 
@@ -688,10 +696,10 @@ public class BotServicio {
         listaEspera.save(espera);
 
         responder(empresa, c.getTelefono(), """
-                Listo, quedó en la *lista de espera* ✅
+                Quedó anotada 🙌
 
-                Si alguien cancela y el cupo le sirve, le escribimos de una.
-                Es por orden de llegada, así que va bien puesta.""");
+                Si alguien cancela y le sirve la hora, usted es de las primeras
+                a las que le escribo. Va por orden de llegada.""");
         c.reiniciar();
     }
 
