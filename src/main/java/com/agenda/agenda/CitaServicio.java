@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.*;
 import java.util.*;
 import java.util.stream.Collectors;
+import com.agenda.catalogo.Servicio;
 import com.agenda.catalogo.ServicioRepositorio;
 import com.agenda.catalogo.ServicioProfesionalRepositorio;
 
@@ -49,8 +50,8 @@ public class CitaServicio {
         // Ajuste propio, o la duración normal del servicio
         int duracion = sp.getDuracionMin() != null ? sp.getDuracionMin()
                 : servicios.findById(servicioId)
-                    .orElseThrow(() -> new NoEncontradoException("Servicio no encontrado"))
-                    .getDuracionMin();
+                .orElseThrow(() -> new NoEncontradoException("Servicio no encontrado"))
+                .getDuracionMin();
 
         if (!disponibilidad.estaLibre(servicioId, profesionalId, inicio)) {
             throw new ReglaNegocioException("Ese horario ya no está disponible");
@@ -84,11 +85,11 @@ public class CitaServicio {
         // se marca. De ahí sale el número de cupos recuperados del reporte.
         if (telefonoCliente != null && !telefonoCliente.isBlank()) {
             listaEspera.findByEmpresaIdAndTelefonoAndEstado(
-                    empresaId, telefonoCliente, EstadoEspera.AVISADO)
-                .forEach(e -> {
-                    e.setEstado(EstadoEspera.TOMO_CUPO);
-                    listaEspera.save(e);
-                });
+                            empresaId, telefonoCliente, EstadoEspera.AVISADO)
+                    .forEach(e -> {
+                        e.setEstado(EstadoEspera.TOMO_CUPO);
+                        listaEspera.save(e);
+                    });
         }
 
         return guardada;
@@ -109,7 +110,8 @@ public class CitaServicio {
     }
 
     @Transactional
-    public void cambiarEstado(Long citaId, EstadoCita nuevo, Long profesionalIdSiTrabajadora) {
+    public void cambiarEstado(Long citaId, EstadoCita nuevo,
+                              Long profesionalIdSiTrabajadora, MetodoPago metodoPago) {
         Long empresaId = ContextoEmpresa.actual();
         Cita cita = citas.findByIdAndEmpresaId(citaId, empresaId)
                 .orElseThrow(() -> new NoEncontradoException("Cita no encontrada"));
@@ -121,6 +123,21 @@ public class CitaServicio {
         }
         EstadoCita anterior = cita.getEstado();
         cita.setEstado(nuevo);
+
+        // Al finalizar se congela lo que se cobró: de ahí salen las comisiones.
+        // No se saca del precio actual del servicio, porque si mañana suben
+        // los precios la liquidación del mes pasado dejaría de cuadrar.
+        if (nuevo == EstadoCita.FINALIZADA) {
+            if (metodoPago != null) {
+                cita.setMetodoPago(metodoPago);
+                cita.setPagadoEn(Instant.now());
+            }
+            if (cita.getValorCobradoCentavos() == null) {
+                servicios.findById(cita.getServicioId())
+                        .map(Servicio::getPrecioCentavos)
+                        .ifPresent(cita::setValorCobradoCentavos);
+            }
+        }
         citas.save(cita);
 
         // Se libera un cupo: se le ofrece a quien esté en lista de espera.
@@ -129,14 +146,38 @@ public class CitaServicio {
         }
     }
 
+    /**
+     * Marca o corrige con qué pagó una clienta.
+     *
+     * Sirve para las que pagan en administración después de que la
+     * trabajadora ya cerró la cita, y para arreglar un error de dedo.
+     */
+    @Transactional
+    public Cita marcarPago(Long citaId, MetodoPago metodo, Long valorCentavos) {
+        Cita cita = citas.findByIdAndEmpresaId(citaId, ContextoEmpresa.actual())
+                .orElseThrow(() -> new NoEncontradoException("Cita no encontrada"));
+
+        cita.setMetodoPago(metodo);
+        cita.setPagadoEn(Instant.now());
+
+        if (valorCentavos != null && valorCentavos > 0) {
+            cita.setValorCobradoCentavos(valorCentavos);
+        } else if (cita.getValorCobradoCentavos() == null) {
+            servicios.findById(cita.getServicioId())
+                    .map(Servicio::getPrecioCentavos)
+                    .ifPresent(cita::setValorCobradoCentavos);
+        }
+        return citas.save(cita);
+    }
+
     /** La agenda del día, con el nombre de cada clienta resuelto. */
     public List<CitaVista> vistaDelDia(LocalDate fecha, Long profesionalId) {
         List<Cita> citas = delDia(fecha, profesionalId);
 
         // Se buscan los clientes de una vez, no uno por cita
         Map<Long, Cliente> porId = clientes.findAllById(
-                citas.stream().map(Cita::getClienteId).filter(Objects::nonNull).toList())
-            .stream().collect(Collectors.toMap(Cliente::getId, c -> c));
+                        citas.stream().map(Cita::getClienteId).filter(Objects::nonNull).toList())
+                .stream().collect(Collectors.toMap(Cliente::getId, c -> c));
 
         return citas.stream().map(c -> {
             Cliente cl = c.getClienteId() == null ? null : porId.get(c.getClienteId());
@@ -145,6 +186,8 @@ public class CitaServicio {
                     c.getInicio(), c.getFin(), c.getEstado(), c.getOrigen(),
                     cl == null ? null : cl.getNombre(),
                     cl == null ? null : cl.getTelefono(),
+                    c.getMetodoPago(),
+                    c.getValorCobradoCentavos(),
                     c.getNotas());
         }).toList();
     }

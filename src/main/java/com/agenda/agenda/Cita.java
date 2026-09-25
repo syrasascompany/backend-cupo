@@ -29,7 +29,20 @@ public class Cita {
 
     @Column(name = "creada_en", nullable = false, updatable = false)
     private Instant creadaEn = Instant.now();
+    @Enumerated(EnumType.STRING)
+    @Column(name = "metodo_pago", length = 20)
+    private MetodoPago metodoPago;
 
+    @Column(name = "pagado_en")
+    private Instant pagadoEn;
+
+    /**
+     * Lo que de verdad se cobró. Se guarda en la cita y no se saca del
+     * precio actual del servicio: si mañana suben los precios, lo del mes
+     * pasado no puede cambiar o la contabilidad deja de cuadrar.
+     */
+    @Column(name = "valor_cobrado_centavos")
+    private Long valorCobradoCentavos;
     public boolean estaViva() {
         return estado == EstadoCita.CONFIRMADA || estado == EstadoCita.FINALIZADA;
     }

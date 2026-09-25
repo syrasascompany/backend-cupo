@@ -4,6 +4,7 @@ import com.agenda.security.UsuarioAutenticado;
 import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -47,11 +48,32 @@ public class CitaControlador {
         return servicio.reprogramar(id, datos.profesionalId(), datos.inicio());
     }
 
-    /** El botón "finalizado" de la trabajadora entra por aquí. */
+    /**
+     * El botón "finalizado" de la trabajadora entra por aquí.
+     *
+     * El método de pago es opcional: si la clienta paga en administración,
+     * lo marca el dueño después con el endpoint de abajo.
+     */
     @PatchMapping("/{id}/estado")
     public void cambiarEstado(@PathVariable Long id, @RequestParam EstadoCita valor,
+                              @RequestParam(required = false) MetodoPago metodoPago,
                               @AuthenticationPrincipal UsuarioAutenticado usuario) {
         servicio.cambiarEstado(id, valor,
-                usuario.esTrabajadora() ? usuario.profesionalId() : null);
+                usuario.esTrabajadora() ? usuario.profesionalId() : null,
+                metodoPago);
+    }
+
+    /**
+     * El administrador marca o corrige con qué pagó una cita.
+     *
+     * Con valorCentavos se puede registrar lo que de verdad se cobró
+     * cuando hubo descuento o se cobró distinto al precio de lista.
+     */
+    @PatchMapping("/{id}/pago")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Cita marcarPago(@PathVariable Long id,
+                           @RequestParam MetodoPago metodo,
+                           @RequestParam(required = false) Long valorCentavos) {
+        return servicio.marcarPago(id, metodo, valorCentavos);
     }
 }

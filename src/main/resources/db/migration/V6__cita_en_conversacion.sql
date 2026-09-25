@@ -1,2 +1,3 @@
 -- La conversación necesita recordar qué cita está moviendo la clienta
-ALTER TABLE conversacion ADD COLUMN cita_id BIGINT REFERENCES cita(id) ON DELETE SET NULL;
+ALTER TABLE conversacion
+    ADD COLUMN IF NOT EXISTS cita_id BIGINT REFERENCES cita(id) ON DELETE SET NULL;

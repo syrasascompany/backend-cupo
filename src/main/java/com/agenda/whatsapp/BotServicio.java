@@ -567,8 +567,7 @@ public class BotServicio {
     private void anular(Empresa empresa, Conversacion c) {
         try {
             ContextoEmpresa.fijar(empresa.getId());
-            citas.cambiarEstado(c.getCitaId(), EstadoCita.CANCELADA, null);
-            // Sin palomita verde: cancelar no es un logro que celebrar
+            citas.cambiarEstado(c.getCitaId(), EstadoCita.CANCELADA, null, null);            // Sin palomita verde: cancelar no es un logro que celebrar
             responder(empresa, c.getTelefono(), """
                     Listo, ya la cancelamos.
 

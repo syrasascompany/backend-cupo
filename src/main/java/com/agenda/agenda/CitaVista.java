@@ -4,8 +4,7 @@ import java.time.Instant;
 
 /**
  * La cita como la necesita el panel: con el nombre y el teléfono de la
- * clienta ya resueltos. Antes solo iba el clienteId y en pantalla no se
- * podía saber de quién era la cita.
+ * clienta ya resueltos, y con lo que pagó.
  */
 public record CitaVista(
         Long id,
@@ -17,5 +16,7 @@ public record CitaVista(
         OrigenCita origen,
         String clienteNombre,
         String clienteTelefono,
+        MetodoPago metodoPago,
+        Long valorCobradoCentavos,
         String notas
 ) {}
